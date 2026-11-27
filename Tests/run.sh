@@ -10,6 +10,6 @@ cc=${CC:-gcc}
     -ITests/support -IHardware -IUser -IVendor/CMSIS/Include \
     -IVendor/Device/Include -IVendor/Device/StdPeriph_Driver/inc \
     -ffunction-sections -fdata-sections \
-    Tests/test_firmware.c Hardware/Motion.c Hardware/PID.c \
+    Tests/test_firmware.c Hardware/Motion.c Hardware/PID.c Hardware/Board.c \
     -Wl,--gc-sections -o "$build_dir/test_firmware"
 "$build_dir/test_firmware"

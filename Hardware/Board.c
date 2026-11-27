@@ -3,7 +3,8 @@
 /*
  * C30D V2.2:
  * PE8 = user LED, active low.
- * PD3 = enable switch, active low (switch to GND).
+ * PD3 = enable switch: ON connects to 3V3, OFF connects to GND.
+ * Verified on this board: ON previously reported HW_DISABLED and OFF ran.
  */
 void Board_Init(void)
 {
@@ -21,7 +22,7 @@ void Board_Init(void)
 
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_3;
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN;
-    GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_DOWN;
     GPIO_Init(GPIOD, &GPIO_InitStructure);
 
     Board_SetLed(0u);
@@ -41,5 +42,5 @@ void Board_SetLed(uint8_t on)
 
 uint8_t Board_IsEnabled(void)
 {
-    return (uint8_t)(GPIO_ReadInputDataBit(GPIOD, GPIO_Pin_3) == Bit_RESET);
+    return (uint8_t)(GPIO_ReadInputDataBit(GPIOD, GPIO_Pin_3) == Bit_SET);
 }

@@ -13,6 +13,7 @@ static uint32_t mock_ms;
 static char tx[2][2048];
 static unsigned int tx_length[2];
 static unsigned int stops;
+static uint8_t mock_enable_level;
 
 uint32_t Timer_GetMs(void) { return mock_ms; }
 FlagStatus USART_GetFlagStatus(USART_TypeDef *uart, uint16_t flag)
@@ -28,7 +29,21 @@ void USART_SendData(USART_TypeDef *uart, uint16_t value)
     tx[port][tx_length[port]] = '\0';
 }
 void Motor_StopAll(void) { stops++; }
-void Board_SetLed(uint8_t value) { (void)value; }
+uint8_t GPIO_ReadInputDataBit(GPIO_TypeDef *port, uint16_t pin)
+{
+    assert(port == GPIOD && pin == GPIO_Pin_3);
+    return mock_enable_level;
+}
+void GPIO_SetBits(GPIO_TypeDef *port, uint16_t pin) { (void)port; (void)pin; }
+void GPIO_ResetBits(GPIO_TypeDef *port, uint16_t pin) { (void)port; (void)pin; }
+
+static void test_enable_switch(void)
+{
+    mock_enable_level = Bit_RESET; /* OFF connects PD3 to GND. */
+    assert(Board_IsEnabled() == 0u);
+    mock_enable_level = Bit_SET;   /* ON connects PD3 to 3V3. */
+    assert(Board_IsEnabled() == 1u);
+}
 
 static uint8_t process(const char *text, ROS_Command *command)
 {
@@ -159,6 +174,7 @@ static void test_state_and_feedback(void)
 
 int main(void)
 {
+    test_enable_switch();
     test_geometry();
     test_parser_and_watchdog();
     test_state_and_feedback();
