@@ -1,0 +1,10 @@
+# Keil build outputs and local IDE state
+Objects/*
+!Objects/C30D_4WD.hex
+Listings/
+*.uvguix.*
+*.uvgui.*
+
+# Python caches
+__pycache__/
+*.py[cod]
