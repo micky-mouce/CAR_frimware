@@ -9,10 +9,10 @@
 
 typedef enum
 {
-    MOTOR_A = 0,
-    MOTOR_B,
-    MOTOR_C,
-    MOTOR_D
+    MOTOR_A = 0, /* front left */
+    MOTOR_B,     /* front right */
+    MOTOR_C,     /* rear left */
+    MOTOR_D      /* rear right */
 } MotorId;
 
 void Motor_Init(void);

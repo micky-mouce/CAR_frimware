@@ -47,14 +47,14 @@ static void ROSBridge_SendString(const char *text)
 {
     uint8_t port;
 
-    for (port = 0u; port < ROS_PORT_COUNT; port++)
+    while (*text != '\0')
     {
-        const char *character = text;
-        while (*character != '\0')
+        /* Feed both UARTs together so transmission time is not doubled. */
+        for (port = 0u; port < ROS_PORT_COUNT; port++)
         {
-            ROSBridge_WriteByte(ros_uart[port], *character);
-            character++;
+            ROSBridge_WriteByte(ros_uart[port], *text);
         }
+        text++;
     }
 }
 
@@ -91,38 +91,6 @@ static char *ROSBridge_SkipSpaces(char *text)
     return text;
 }
 
-static uint8_t ROSBridge_ParseRpm(char *text, uint16_t *rpm)
-{
-    uint32_t value = 0u;
-    uint8_t has_digit = 0u;
-
-    text = ROSBridge_SkipSpaces(text);
-    while ((*text >= '0') && (*text <= '9'))
-    {
-        has_digit = 1u;
-        value = (value * 10u) + (uint32_t)(*text - '0');
-        if (value > 65535u)
-        {
-            return 0u;
-        }
-        text++;
-    }
-
-    text = ROSBridge_SkipSpaces(text);
-    if ((has_digit == 0u) || (*text != '\0'))
-    {
-        return 0u;
-    }
-
-    if ((value < ROS_MIN_TARGET_RPM) || (value > ROS_MAX_TARGET_RPM))
-    {
-        return 0u;
-    }
-
-    *rpm = (uint16_t)value;
-    return 1u;
-}
-
 static uint8_t ROSBridge_ProcessLine(char *line, ROS_Command *command)
 {
     char *end;
@@ -143,12 +111,7 @@ static uint8_t ROSBridge_ProcessLine(char *line, ROS_Command *command)
     if (ROSBridge_EqualsIgnoreCase(line, "STOP"))
     {
         command->command = ROS_CMD_STOP;
-        command->target_rpm = ROS_DEFAULT_TARGET_RPM;
-        result = 1u;
-    }
-    else if (ROSBridge_EqualsIgnoreCase(line, "RUN"))
-    {
-        command->command = ROS_CMD_RUN;
+        command->motion = MOTION_STOP;
         command->target_rpm = ROS_DEFAULT_TARGET_RPM;
         result = 1u;
     }
@@ -156,18 +119,10 @@ static uint8_t ROSBridge_ProcessLine(char *line, ROS_Command *command)
     {
         ROSBridge_SendString("PONG\r\n");
     }
-    else if ((ROSBridge_ToUpper(line[0]) == 'R') &&
-             (ROSBridge_ToUpper(line[1]) == 'U') &&
-             (ROSBridge_ToUpper(line[2]) == 'N') &&
-             (line[3] == ','))
+    else if (Motion_Parse(line, &command->motion, &command->target_rpm))
     {
-        uint16_t rpm;
-        if (ROSBridge_ParseRpm(&line[4], &rpm))
-        {
-            command->command = ROS_CMD_RUN;
-            command->target_rpm = rpm;
-            result = 1u;
-        }
+        command->command = ROS_CMD_RUN;
+        result = 1u;
     }
 
     if (result != 0u)
@@ -412,13 +367,13 @@ static uint16_t ROSBridge_AppendWheelValues(char *buffer, uint16_t position,
 
 void ROSBridge_SendReady(void)
 {
-    ROSBridge_SendString("READY,PROTOCOL=MOTOR_4WD_V1,DRIVE=4WD,"
+    ROSBridge_SendString("READY,PROTOCOL=OMNI_4WD_V2,DRIVE=OMNI4,"
                          "UART1+UART3=115200,HEARTBEAT_TIMEOUT_MS=500\r\n");
 }
 
 void ROSBridge_SendStatus(const ROS_Status *status)
 {
-    char buffer[320];
+    char buffer[448];
     uint16_t position = 0u;
     int32_t actual_sum = 0;
     uint8_t index;
@@ -428,7 +383,8 @@ void ROSBridge_SendStatus(const ROS_Status *status)
     status_sequence++;
     for (index = 0u; index < MOTOR_COUNT; index++)
     {
-        actual_sum += status->actual_rpm[index];
+        actual_sum += (status->actual_rpm[index] < 0) ?
+                      -(int32_t)status->actual_rpm[index] : status->actual_rpm[index];
     }
 
     position = ROSBridge_AppendString(buffer, position, "STATUS,SEQ=");
@@ -437,11 +393,15 @@ void ROSBridge_SendStatus(const ROS_Status *status)
     position = ROSBridge_AppendString(buffer, position, state_text);
     position = ROSBridge_AppendString(buffer, position, ",CMD=");
     position = ROSBridge_AppendString(buffer, position, command_text);
-    position = ROSBridge_AppendString(buffer, position, ",DRIVE=4WD,TARGET_RPM=");
+    position = ROSBridge_AppendString(buffer, position, ",MOTION=");
+    position = ROSBridge_AppendString(buffer, position, Motion_Name(status->motion));
+    position = ROSBridge_AppendString(buffer, position, ",DRIVE=OMNI4,TARGET_RPM=");
     position = ROSBridge_AppendUnsigned(buffer, position, status->target_rpm);
     position = ROSBridge_AppendString(buffer, position, ",ACTUAL_RPM=");
     position = ROSBridge_AppendSigned(buffer, position,
                                       actual_sum / (int32_t)MOTOR_COUNT);
+    position = ROSBridge_AppendWheelValues(buffer, position, "TARGET_",
+                                           status->wheel_target);
     position = ROSBridge_AppendWheelValues(buffer, position, "RPM_",
                                            status->actual_rpm);
     position = ROSBridge_AppendWheelValues(buffer, position, "PWM_",

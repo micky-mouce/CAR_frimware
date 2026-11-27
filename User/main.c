@@ -22,6 +22,9 @@ typedef enum
 static DriveState drive_state = DRIVE_STOP;
 static const char *stop_reason = "BOOT";
 static uint16_t target_rpm = ROS_DEFAULT_TARGET_RPM;
+static MotionId motion = MOTION_STOP;
+static int16_t wheel_target[MOTOR_COUNT] = {0, 0, 0, 0};
+static uint8_t settle_ticks = 0u;
 static int16_t actual_rpm[MOTOR_COUNT] = {0, 0, 0, 0};
 static int16_t motor_pwm[MOTOR_COUNT] = {0, 0, 0, 0};
 static PID_Controller wheel_pid[MOTOR_COUNT];
@@ -30,7 +33,7 @@ static uint16_t led_counter = 0u;
 static uint8_t oled_counter = 0u;
 
 static void Drive_EnterState(DriveState new_state, const char *reason);
-static void Drive_ApplyTarget(uint16_t new_target);
+static void Drive_ApplyTarget(MotionId new_motion, uint16_t new_target);
 static void Drive_UpdateLeds(void);
 static void OLED_UpdateDisplay(void);
 
@@ -50,7 +53,7 @@ int main(void)
     {
         PID_Init(&wheel_pid[index]);
         PID_SetParam(&wheel_pid[index], PID_KP, PID_KI, PID_KD);
-        PID_SetTarget(&wheel_pid[index], (float)target_rpm);
+        PID_SetTarget(&wheel_pid[index], (float)wheel_target[index]);
     }
 
     Motor_StopAll();
@@ -66,8 +69,6 @@ int main(void)
         {
             if (command.command == ROS_CMD_RUN)
             {
-                Drive_ApplyTarget(command.target_rpm);
-
                 if (Board_IsEnabled() == 0u)
                 {
                     if (drive_state != DRIVE_STOP)
@@ -79,9 +80,13 @@ int main(void)
                         stop_reason = "HW_DISABLED";
                     }
                 }
-                else if (drive_state != DRIVE_RUN)
+                else
                 {
-                    Drive_EnterState(DRIVE_RUN, "ROS_RUN");
+                    Drive_ApplyTarget(command.motion, command.target_rpm);
+                    if (drive_state != DRIVE_RUN)
+                    {
+                        Drive_EnterState(DRIVE_RUN, "ROS_RUN");
+                    }
                 }
             }
             else if (command.command == ROS_CMD_STOP)
@@ -119,6 +124,10 @@ int main(void)
 
                 if (fault == 0u)
                 {
+                    if (settle_ticks > 0u)
+                    {
+                        Motor_StopAll();
+                    }
                     for (index = 0u; index < MOTOR_COUNT; index++)
                     {
                         float rpm = Encoder_GetRPM(index, CONTROL_PERIOD_MS);
@@ -126,10 +135,12 @@ int main(void)
 
                         actual_rpm[index] = (int16_t)(rpm +
                             (rpm >= 0.0f ? 0.5f : -0.5f));
-                        output = PID_Calc(&wheel_pid[index], rpm);
+                        output = (settle_ticks != 0u) ? 0.0f :
+                                 PID_Calc(&wheel_pid[index], rpm);
                         motor_pwm[index] = (int16_t)output;
                         Motor_SetCommand((MotorId)index, motor_pwm[index]);
                     }
+                    if (settle_ticks > 0u) settle_ticks--;
                 }
             }
 
@@ -137,8 +148,8 @@ int main(void)
             {
                 for (index = 0u; index < MOTOR_COUNT; index++)
                 {
-                    (void)Encoder_GetDelta(index);
-                    actual_rpm[index] = 0;
+                    float rpm = Encoder_GetRPM(index, CONTROL_PERIOD_MS);
+                    actual_rpm[index] = (int16_t)(rpm + (rpm >= 0.0f ? 0.5f : -0.5f));
                     motor_pwm[index] = 0;
                 }
                 Motor_StopAll();
@@ -151,7 +162,8 @@ int main(void)
 
                 status_counter = 0u;
                 feedback.running = (uint8_t)(drive_state == DRIVE_RUN);
-                feedback.target_rpm = target_rpm;
+                feedback.target_rpm = (drive_state == DRIVE_RUN) ? target_rpm : 0u;
+                feedback.motion = (drive_state == DRIVE_RUN) ? motion : MOTION_STOP;
                 feedback.age_ms = ROSBridge_GetCommandAgeMs();
                 feedback.command_valid = ROSBridge_HasValidCommand();
                 feedback.reason = (drive_state == DRIVE_RUN) ?
@@ -159,6 +171,7 @@ int main(void)
 
                 for (index = 0u; index < MOTOR_COUNT; index++)
                 {
+                    feedback.wheel_target[index] = (drive_state == DRIVE_RUN) ? wheel_target[index] : 0;
                     feedback.actual_rpm[index] = actual_rpm[index];
                     feedback.pwm[index] = motor_pwm[index];
                 }
@@ -187,7 +200,7 @@ static void Drive_EnterState(DriveState new_state, const char *reason)
     {
         for (index = 0u; index < MOTOR_COUNT; index++)
         {
-            PID_SetTarget(&wheel_pid[index], (float)target_rpm);
+            PID_SetTarget(&wheel_pid[index], (float)wheel_target[index]);
         }
         Board_SetLed(1u);
         stop_reason = "ROS_RUN";
@@ -195,32 +208,38 @@ static void Drive_EnterState(DriveState new_state, const char *reason)
     else
     {
         Motor_StopAll();
+        motion = MOTION_STOP;
+        settle_ticks = 0u;
         for (index = 0u; index < MOTOR_COUNT; index++)
         {
             PID_Reset(&wheel_pid[index]);
-            actual_rpm[index] = 0;
+            wheel_target[index] = 0;
             motor_pwm[index] = 0;
         }
         stop_reason = reason;
     }
 }
 
-static void Drive_ApplyTarget(uint16_t new_target)
+static void Drive_ApplyTarget(MotionId new_motion, uint16_t new_target)
 {
     uint8_t index;
+    if ((new_motion == motion) && (new_target == target_rpm)) return;
 
-    if (new_target == target_rpm)
+    /* Stop before switching direction; leave one complete control tick off.
+     * Repeated identical heartbeat commands do not reset PID or this guard.
+     */
+    if (new_motion != motion)
     {
-        return;
+        Motor_StopAll();
+        settle_ticks = 1u;
+        for (index = 0u; index < MOTOR_COUNT; index++) motor_pwm[index] = 0;
     }
-
+    motion = new_motion;
     target_rpm = new_target;
-    if (drive_state == DRIVE_RUN)
+    Motion_GetTargets(motion, target_rpm, wheel_target);
+    for (index = 0u; index < MOTOR_COUNT; index++)
     {
-        for (index = 0u; index < MOTOR_COUNT; index++)
-        {
-            PID_SetTarget(&wheel_pid[index], (float)target_rpm);
-        }
+        PID_SetTarget(&wheel_pid[index], (float)wheel_target[index]);
     }
 }
 
@@ -291,7 +310,7 @@ static void OLED_UpdateDisplay(void)
     OLED_ShowString(1, 1, "4WD ");
     OLED_ShowString(1, 5, (char *)state_text);
 
-    OLED_ShowString(2, 1, "TARGET ");
+    OLED_ShowString(2, 1, (char *)Motion_Name(motion));
     OLED_ShowNum(2, 8, target_rpm, 3);
 
     OLED_ShowString(3, 1, "RPM A ");

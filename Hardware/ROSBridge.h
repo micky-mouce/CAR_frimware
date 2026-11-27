@@ -3,10 +3,11 @@
 
 #include "stm32f4xx.h"
 #include "Motor.h"
+#include "Motion.h"
 
-#define ROS_DEFAULT_TARGET_RPM   40u
-#define ROS_MIN_TARGET_RPM       20u
-#define ROS_MAX_TARGET_RPM       80u
+#define ROS_DEFAULT_TARGET_RPM   MOTION_DEFAULT_RPM
+#define ROS_MIN_TARGET_RPM       MOTION_MIN_RPM
+#define ROS_MAX_TARGET_RPM       MOTION_MAX_RPM
 #define ROS_COMMAND_TIMEOUT_MS   500u
 
 typedef enum
@@ -19,12 +20,15 @@ typedef enum
 typedef struct
 {
     ROS_CommandType command;
+    MotionId motion;
     uint16_t target_rpm;
 } ROS_Command;
 
 typedef struct
 {
     uint8_t  running;
+    MotionId motion;
+    int16_t  wheel_target[MOTOR_COUNT];
     uint16_t target_rpm;
     int16_t  actual_rpm[MOTOR_COUNT];
     int16_t  pwm[MOTOR_COUNT];

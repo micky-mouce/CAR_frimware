@@ -466,6 +466,11 @@
               <FilePath>.\Hardware\PWM.h</FilePath>
             </File>
             <File>
+              <FileName>Motion.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Hardware\Motion.c</FilePath>
+            </File>
+            <File>
               <FileName>Motor.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Hardware\Motor.c</FilePath>
